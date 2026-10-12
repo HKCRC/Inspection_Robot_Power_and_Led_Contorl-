@@ -77,9 +77,9 @@ extern UART_HandleTypeDef huart4;
 #define MB_WS_REG_COUNT    7u
 
 /* ---- 线圈映射(FC01 读 / FC05 写) ------------------------------------------
- * 线圈0 = 电源(MOS管)   0xFF00=通电 0x0000=断电（断电指令即"关电"指令）
+ * 线圈0 = 电源(MOS管)   0xFF00=通电(立即) 0x0000=关电(延时15s再断 MOS，见 ctl.c)
  *         电源锁存状态由 ctl.c 管理：START 按键也可本地通电
- * 线圈1 = 继电器        0xFF00=吸合 0x0000=断开（完全由上位机控制）
+ * 线圈1 = 继电器        0xFF00=吸合 0x0000=断开（均立即执行，完全由上位机控制）
  * 联动输出(OUT1~OUT3/OUT_START)跟随本地按键，不开放线圈控制
  * ------------------------------------------------------------------------ */
 #define MB_COIL_COUNT  2u
@@ -108,9 +108,9 @@ static volatile uint8_t  s_tx_err;      /* 诊断：应答发送失败标志(0=�
 
 /* USER CODE BEGIN Private_Function_Prototypes */
 static uint16_t mb_crc16(const uint8_t *data, uint16_t len);
-static uint16_t mb_build_read_coils(uint8_t start, uint16_t count);
+static uint16_t mb_build_read_coils(uint16_t start, uint16_t count);
 static uint16_t mb_build_read_regs(uint16_t start, uint16_t count);
-static uint16_t mb_build_write_single_coil(uint8_t start, uint16_t val);
+static uint16_t mb_build_write_single_coil(uint16_t start, uint16_t val);
 static uint16_t mb_build_exception(uint8_t func, uint8_t excode);
 static uint8_t  mb_ws_reg_valid(uint8_t ofs, uint16_t val);
 static void     mb_ws_push_cfg(void);
@@ -146,10 +146,10 @@ static uint16_t mb_crc16(const uint8_t *data, uint16_t len)
   * @note   线圈0=电源(MOS)锁存状态(数据源 ctl.c)，线圈1=继电器实际输出电平
   * @note   s_tx_buf[0..1] 已填好 从机地址+功能码
   */
-static uint16_t mb_build_read_coils(uint8_t start, uint16_t count)
+static uint16_t mb_build_read_coils(uint16_t start, uint16_t count)
 {
-  /* 校验线圈数量：start 从 0 开始，超出线圈总数则非法地址 */
-  if (count == 0 || count > MB_COIL_COUNT || start + count > MB_COIL_COUNT)
+  /* 校验地址/数量：线圈地址为 16 位(0x0000~0xFFFF)，用 uint32 求和防溢出；越界(含 0x0100 这类高字节非 0 的地址)统一按非法地址处理 */
+  if (count == 0u || count > MB_COIL_COUNT || ((uint32_t)start + count) > MB_COIL_COUNT)
   {
     return 0;
   }
@@ -170,7 +170,7 @@ static uint16_t mb_build_read_coils(uint8_t start, uint16_t count)
       {
         break;   /* 超出本次读取数量，剩余位补 0 */
       }
-      if (state & (uint16_t)(1u << coil))
+      if (((uint32_t)state & ((uint32_t)1u << coil)) != 0u)
       {
         val |= (uint8_t)(1u << bit);
       }
@@ -231,7 +231,7 @@ static uint16_t mb_build_read_regs(uint16_t start, uint16_t count)
   * @note   线圈0 -> ctl_set_power()：电源(MOS)通/断，0x0000 即"关电"指令
   *         线圈1 -> 继电器吸合/断开
   */
-static uint16_t mb_build_write_single_coil(uint8_t start, uint16_t val)
+static uint16_t mb_build_write_single_coil(uint16_t start, uint16_t val)
 {
   if (start >= MB_COIL_COUNT)
   {
@@ -479,7 +479,7 @@ uint8_t modbus_task(void)
     case MB_FC_READ_COILS:       /* 01 读线圈 */
       if (s_rx_len < 8) return 0;
       resp_len = mb_build_read_coils(
-          (uint8_t)((s_rx_buf[2] << 8) | s_rx_buf[3]),
+          (uint16_t)((s_rx_buf[2] << 8) | s_rx_buf[3]),
           (uint16_t)((s_rx_buf[4] << 8) | s_rx_buf[5]));
       if (resp_len == 0)
       {
@@ -490,7 +490,7 @@ uint8_t modbus_task(void)
     case MB_FC_WRITE_SINGLE_COIL: /* 05 写单线圈 */
       if (s_rx_len < 8) return 0;
       {
-        uint8_t  coil = (uint8_t)((s_rx_buf[2] << 8) | s_rx_buf[3]);
+        uint16_t coil = (uint16_t)((s_rx_buf[2] << 8) | s_rx_buf[3]);
         uint16_t val  = (uint16_t)((s_rx_buf[4] << 8) | s_rx_buf[5]);
         resp_len = mb_build_write_single_coil(coil, val);
         if (resp_len == 0)

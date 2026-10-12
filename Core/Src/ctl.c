@@ -2,7 +2,7 @@
 /**
   ******************************************************************************
   * @file    ctl.c
-  * @brief   输出控制逻辑层实现：按键联动输出 + 电源(MOS)锁存状态机
+  * @brief   输出控制逻辑层实现：按键联动输出 + 电源(MOS)锁存/延时断电状态机
   * @note    职责边界（对应需求：需求资源分配.md）：
   *          ① IN1_BLUE  按下 -> OUT1_BULE  高电平（电平跟随，松开回落）
   *          ② IN2_WHITE 按下 -> OUT2_WHITE 高电平
@@ -11,9 +11,11 @@
   *             （按键无自锁，松开不回落），随上位机断电指令一并复位
   *          ⑤ START     检测到低电平(按下) -> OUT_MOS 高电平，MOS 通电
   *             （按下即上电，含开机时已按住的场景；本地只能开机）
-  *          ⑥ 通电后断电只响应上位机"写线圈0=0x0000"指令
-  *          ⑦ 继电器(线圈1)：吸合指令立即执行；关闭指令延时15s再输出高
-  *             电平断开触点（继电器驱动为低电平吸合，极性宏可改）
+  *          ⑥ 断电只响应上位机"写线圈0=0x0000"，而且是**延时断 MOS**：
+  *             收到关电指令后 MOS 继续供电 CTL_POWER_OFF_DELAY_MS(15s)，
+  *             给上位机留出关机时间；期间再写线圈0=0xFF00 可取消延时。
+  *          ⑦ 继电器(线圈1)：吸合/断开均**立即**执行，无延时
+  *             （继电器驱动为低电平吸合，极性宏可改）
   *          输入统一取自 di.c 防抖稳定状态，输出统一经 relay.c 通道驱动，
   *          本模块不直接操作 GPIO，与硬件引脚解耦。
   ******************************************************************************
@@ -34,16 +36,17 @@
 /* 继电器驱动极性：硬件低电平吸合（输出低=触点闭合，输出高=触点断开）。
  * 极性只在此处适配，relay.c 保持纯电平语义；若实测相反改这两个宏即可 */
 #define CTL_RELAY_PULLIN_LVL     RELAY_OFF   /* 吸合 = 输出低 */
-#define CTL_RELAY_RELEASE_LVL    RELAY_ON    /* 关闭 = 输出高 */
+#define CTL_RELAY_RELEASE_LVL    RELAY_ON    /* 断开 = 输出高 */
 
-#define CTL_RELAY_CLOSE_DELAY_MS  5000u     /* 关闭指令->执行断开的延时 5s */
+/* 关电指令 -> 断开 MOS 的延时：这段时间 MOS 仍供电，供上位机完成关机 */
+#define CTL_POWER_OFF_DELAY_MS  15000u
 /* USER CODE END Private defines */
 
 /* USER CODE BEGIN Private variables */
-static uint8_t s_power;            /* 电源锁存状态：1=MOS通电 0=断电 */
-static uint8_t s_relay;            /* 继电器逻辑状态：1=吸合(输出低) 0=关闭(输出高) */
-static uint8_t s_relay_close_pend; /* 1=继电器关闭延时进行中(15s 计时) */
-static uint32_t s_relay_close_t0;  /* 继电器关闭指令到达时刻(ms tick) */
+static uint8_t  s_power_out;       /* MOS 实际输出：1=通电 0=断电(延时到期后才置 0) */
+static uint8_t  s_power_off_pend;  /* 1=延时断电进行中(此时 s_power_out 仍为 1) */
+static uint32_t s_power_off_t0;    /* 收到关电指令的时刻(ms tick) */
+static uint8_t  s_relay;           /* 继电器状态：1=吸合(输出低) 0=断开(输出高)，无延时 */
 /* USER CODE END Private variables */
 
 /* USER CODE BEGIN Private_Function_Prototypes */
@@ -57,52 +60,53 @@ static uint32_t s_relay_close_t0;  /* 继电器关闭指令到达时刻(ms tick)
   */
 void ctl_init(void)
 {
-  s_power            = 0u;   /* MOS 关断，等待 START 按下或上位机指令 */
-  s_relay            = 1u;   /* 上电默认吸合(与 relay_init 输出低=低吸合一致) */
-  s_relay_close_pend = 0u;
+  s_power_out      = 0u;   /* MOS 关断，等待 START 按下或上位机指令 */
+  s_power_off_pend = 0u;
+  s_relay          = 1u;   /* 上电默认吸合(与 relay_init 输出低=吸合一致) */
 }
 
 /**
   * @brief  上位机写线圈0：电源通/断指令入口（Modbus FC05 调用）
-  * @param  on  1=MOS通电  0=断电
-  * @note   断电是本地唯一无法完成的操作，只能由上位机经此接口下发。
+  * @param  on  1=通电(立即)  0=关电(延时 CTL_POWER_OFF_DELAY_MS 后断开 MOS)
+  * @note   断电是本地唯一无法完成的操作，只能由上位机经此接口下发；
+  *         关电不是立即断电：MOS 继续保持供电 15s，让上位机执行 shutdown，
+  *         这期间再写线圈0=1 可取消延时。
   */
 void ctl_set_power(uint8_t on)
 {
-  s_power = on ? 1u : 0u;
+  if (on)
+  {
+    s_power_out      = 1u;
+    s_power_off_pend = 0u;              /* 通电指令取消未完成的延时断电 */
+  }
+  else if (s_power_out != 0u)
+  {
+    s_power_off_pend = 1u;              /* MOS 仍通电，启动延时，ctl_task 到点断开 */
+    s_power_off_t0   = HAL_GetTick();
+  }
 }
 
 /**
-  * @brief  查询当前电源锁存状态（Modbus FC01 读线圈0 的数据源）
-  * @retval 1=通电 0=断电
+  * @brief  查询电源实际输出状态（Modbus FC01 读线圈0 的数据源）
+  * @retval 1=MOS 通电(含延时断电进行中)  0=已断电
   */
 uint8_t ctl_power_get(void)
 {
-  return s_power;
+  return s_power_out;
 }
 
 /**
   * @brief  上位机写线圈1：继电器控制指令入口（Modbus FC05 调用）
-  * @param  on  1=吸合(立即执行，取消挂起的延时关闭)  0=关闭(延时15s断开触点)
+  * @param  on  1=吸合  0=断开（均立即执行，无延时）
   */
 void ctl_set_relay(uint8_t on)
 {
-  if (on)
-  {
-    s_relay            = 1u;
-    s_relay_close_pend = 0u;            /* 吸合指令取消未完成的延时关闭 */
-  }
-  else
-  {
-    s_relay            = 0u;            /* 逻辑状态立即更新(读线圈即返回关闭) */
-    s_relay_close_pend = 1u;            /* 启动 15s 延时，ctl_task 中到点执行 */
-    s_relay_close_t0   = HAL_GetTick();
-  }
+  s_relay = on ? 1u : 0u;
 }
 
 /**
-  * @brief  查询继电器逻辑状态（Modbus FC01 读线圈1 的数据源）
-  * @retval 1=吸合 0=关闭(含延时进行中)
+  * @brief  查询继电器状态（Modbus FC01 读线圈1 的数据源）
+  * @retval 1=吸合 0=断开
   */
 uint8_t ctl_relay_get(void)
 {
@@ -110,10 +114,10 @@ uint8_t ctl_relay_get(void)
 }
 
 /**
-  * @brief  主循环周期调用：刷新按键联动输出与电源锁存
+  * @brief  主循环周期调用：刷新按键联动输出、电源锁存与延时断电
   * @note   电平跟随输出每周期无条件刷新，抗干扰自恢复；
-  *         电源锁存为电平触发+软件锁存：检测到 START 按下即置位，
-  *         松开后保持（按键无自锁），只有上位机断电指令能清零。
+  *         电源为电平触发+软件锁存：检测到 START 按下即置位，松开后保持
+  *         （按键无自锁），只有上位机关电指令能清零。
   */
 void ctl_task(void)
 {
@@ -126,28 +130,29 @@ void ctl_task(void)
 
   /* ② 电源锁存：检测到 START 低电平(按下)即置位上电——按下时才上电，
    *    松开后软件锁存保持（按键无自锁）；清零路径只有一条 ——
-   *    上位机写线圈0(ctl_set_power)，本地按键不能断电 */
-  if (start_now)
+   *    上位机写线圈0(ctl_set_power)。延时断电进行中忽略 START
+   *    （需求 §4.2：关机倒计时期间 START 按键不处理） */
+  if ((start_now != 0u) && (s_power_off_pend == 0u))
   {
-    s_power = 1u;
+    s_power_out = 1u;
   }
 
-  /* ③ 锁存输出：OUT_START 与 MOS 电源同态——检测到按下即置高并保持，
-   *    松开不回落；上位机写线圈0断电时两路一并拉低复位 */
-  relay_set(RELAY_CH_MOS,       s_power);
-  relay_set(RELAY_CH_OUT_START, s_power);
+  /* ③ 延时断电到点：此刻才真正断开 MOS（此前一直保持供电） */
+  if ((s_power_off_pend != 0u) &&
+      ((HAL_GetTick() - s_power_off_t0) >= CTL_POWER_OFF_DELAY_MS))
+  {
+    s_power_off_pend = 0u;
+    s_power_out      = 0u;
+  }
 
-  /* ④ 继电器延时控制：吸合立即执行；关闭指令延时15s再输出高电平断开触点 */
-  if (s_relay)
-  {
-    relay_set(RELAY_CH_JIDIANQI, CTL_RELAY_PULLIN_LVL);   /* 吸合：输出低 */
-  }
-  else if (s_relay_close_pend &&
-           (HAL_GetTick() - s_relay_close_t0) >= CTL_RELAY_CLOSE_DELAY_MS)
-  {
-    s_relay_close_pend = 0u;
-    relay_set(RELAY_CH_JIDIANQI, CTL_RELAY_RELEASE_LVL);  /* 关闭：输出高 */
-  }
+  /* ④ 锁存输出：OUT_START 与 MOS 电源同态——检测到按下即置高并保持，
+   *    松开不回落；上位机关电延时到期后两路一并拉低复位 */
+  relay_set(RELAY_CH_MOS,       s_power_out);
+  relay_set(RELAY_CH_OUT_START, s_power_out);
+
+  /* ⑤ 继电器：吸合/断开均立即生效，无延时 */
+  relay_set(RELAY_CH_JIDIANQI,
+            (s_relay != 0u) ? CTL_RELAY_PULLIN_LVL : CTL_RELAY_RELEASE_LVL);
 }
 
 /* USER CODE BEGIN 1 */

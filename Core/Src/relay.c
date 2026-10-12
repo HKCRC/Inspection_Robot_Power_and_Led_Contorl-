@@ -25,7 +25,7 @@ typedef struct
 
 static const relay_map_t s_do_map[RELAY_CH_MAX] =
 {
-  { OUT_jidianqi_GPIO_Port, OUT_jidianqi_Pin },   /* 1: 继电器        PC9  */
+  { OUT_jidianqi_GPIO_Port, OUT_jidianqi_Pin },    /* 1: 继电器        PC9  */
   { OUT_MOS_GPIO_Port,         OUT_MOS_Pin   },    /* 2: MOS管(主电源) PC12 */
   { OUT1_C_GPIO_Port,   			  OUT1_C_Pin   },    /* 3: 联动输出1(蓝) PE10 */
   { OUT2_B_GPIO_Port,  				   OUT2_B_Pin  },    /* 4: 联动输出2(白) PB1  */
