@@ -65,11 +65,17 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, OUT_jidianqi_Pin|OUT_MOS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : l_key_Pin IN2_B_Pin IN0_TOUCH_Pin IN1_C_Pin */
-  GPIO_InitStruct.Pin = l_key_Pin|IN2_B_Pin|IN0_TOUCH_Pin|IN1_C_Pin;
+  /*Configure GPIO pins : l_key_Pin IN2_B_Pin IN1_C_Pin */
+  GPIO_InitStruct.Pin = l_key_Pin|IN2_B_Pin|IN1_C_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : IN0_TOUCH_Pin (TOUCH 机器人盖章：PC7 -> PA4) */
+  GPIO_InitStruct.Pin = IN0_TOUCH_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(IN0_TOUCH_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : ws2812_Pin OUT3_A_Pin */
   GPIO_InitStruct.Pin = ws2812_Pin|OUT3_A_Pin;

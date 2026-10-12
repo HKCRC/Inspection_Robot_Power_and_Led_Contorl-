@@ -61,8 +61,8 @@ extern UART_HandleTypeDef huart4;
 #define MB_EXC_ILLEGAL_VALUE       0x03u
 
 /* ---- 输入寄存器映射(FC03/FC04 共用) --------------------------------------
- * 0x0000=IN1   0x0001=IN2   0x0002=IN3   0x0003=STOP  0x0004=START
- * 0x0005=打包位图 bit0=IN1 bit1=IN2 bit2=IN3 bit3=STOP bit4=START
+ * 0x0000=IN1   0x0001=IN2   0x0002=IN3   0x0003=TOUCH  0x0004=START
+ * 0x0005=打包位图 bit0=IN1 bit1=IN2 bit2=IN3 bit3=TOUCH bit4=START
  * 寄存器值：1=触发(输入低电平)  0=未触发(数据源为 di.c 防抖后的状态)
  * ------------------------------------------------------------------------ */
 /* ---- WS2812 保持寄存器(FC03/04 读，FC06/16 写) ----------------------------

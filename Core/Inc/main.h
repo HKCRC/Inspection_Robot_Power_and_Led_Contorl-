@@ -75,8 +75,8 @@ void Error_Handler(void);
 #define IN3_A_GPIO_Port GPIOD
 #define IN2_B_Pin GPIO_PIN_6
 #define IN2_B_GPIO_Port GPIOC
-#define IN0_TOUCH_Pin GPIO_PIN_7
-#define IN0_TOUCH_GPIO_Port GPIOC
+#define IN0_TOUCH_Pin GPIO_PIN_4
+#define IN0_TOUCH_GPIO_Port GPIOA
 #define IN1_C_Pin GPIO_PIN_8
 #define IN1_C_GPIO_Port GPIOC
 #define OUT_jidianqi_Pin GPIO_PIN_9

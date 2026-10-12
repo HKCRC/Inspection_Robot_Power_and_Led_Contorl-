@@ -2,7 +2,7 @@
 /**
   ******************************************************************************
   * @file    di.c
-  * @brief   数字量输入(DI)实现：IN1/IN2/IN3/STOP/START 五路输入
+  * @brief   数字量输入(DI)实现：IN1/IN2/IN3/TOUCH/START 五路输入
   * @note    全部低电平有效：输入为低(开关闭合/按下)时视为有效/触发。
   *          引脚由 CubeMX 配置(输入+上拉)，此处仅读取不做重复配置。
   *          状态经软件防抖后供 Modbus 寄存器(FC03/FC04)上报。
@@ -18,7 +18,7 @@
 
 /* USER CODE BEGIN Private defines */
 /* 五路输入引脚映射：与 main.h 的 CubeMX 引脚宏保持一致
- * IN1_BLUE=PC8  IN2_WHITE=PC6  IN3_GREEN=PB15  STOP=PC7  START=PA8 */
+ * IN1_BLUE=PC8  IN2_WHITE=PC6  IN3_GREEN=PB15  TOUCH=PA4  START=PA8 */
 typedef struct
 {
   GPIO_TypeDef *port;
@@ -93,7 +93,7 @@ void di_scan(void)
 
 /**
   * @brief  取单路输入状态
-  * @param  idx : 0=IN1 1=IN2 2=IN3 3=STOP 4=START
+  * @param  idx : 0=IN1 1=IN2 2=IN3 3=TOUCH 4=START
   * @retval 1=触发(低电平)  0=未触发；idx 非法返回 0
   */
 uint8_t di_get_input(uint8_t idx)
@@ -103,7 +103,7 @@ uint8_t di_get_input(uint8_t idx)
 
 /**
   * @brief  五路输入打包位图
-  * @retval bit0=IN1 bit1=IN2 bit2=IN3 bit3=STOP bit4=START，1=触发
+  * @retval bit0=IN1 bit1=IN2 bit2=IN3 bit3=TOUCH bit4=START，1=触发
   */
 uint16_t di_get_packed(void)
 {
@@ -119,7 +119,7 @@ uint16_t di_get_packed(void)
 uint8_t di_get_limit_left(void)  { return 0u; }                /* 限位已取消 */
 uint8_t di_get_limit_right(void) { return 0u; }
 uint8_t di_get_limit(void)       { return 0u; }
-uint8_t di_get_estop(void)       { return di_get_input(3u); }  /* 急停=STOP */
+uint8_t di_get_touch(void)       { return di_get_input(3u); }  /* TOUCH(机器人盖章) 状态；原名 di_get_estop() */
 
 /* USER CODE BEGIN 1 */
 
