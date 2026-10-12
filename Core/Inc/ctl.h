@@ -13,6 +13,7 @@
   *          ④ 关电(写线圈0=0x0000)是**延时断电**：MOS 继续供电
   *             CTL_POWER_OFF_DELAY_MS(15s) 给上位机执行关机，到期才断 MOS；
   *             期间再写线圈0=0xFF00 可取消。
+  *             读线圈0 上报**命令状态**（写完 0 立即读回 0），非 MOS 实际输出。
   *          ⑤ 继电器(线圈1)：吸合/断开均立即执行，无延时（低电平吸合）。
   *          数据源为 di.c 防抖后的稳定状态，输出经 relay.c 通道驱动。
   ******************************************************************************
@@ -32,7 +33,7 @@ extern "C" {
 void    ctl_init(void);                 /* 初始化：上电默认 MOS 断电/继电器吸合 */
 void    ctl_task(void);                 /* 主循环周期调用：联动输出/电源锁存/延时断电 */
 void    ctl_set_power(uint8_t on);      /* 上位机写线圈0：1=通电(立即) 0=关电(延时15s断MOS) */
-uint8_t ctl_power_get(void);            /* 电源实际输出状态：1=MOS通电(含延时中) 0=已断电 */
+uint8_t ctl_power_get(void);            /* 电源命令状态：1=通电命令 0=关电命令(关电后立即读回0，MOS 仍在延时供电) */
 void    ctl_set_relay(uint8_t on);      /* 上位机写线圈1：1=吸合 0=断开(均立即) */
 uint8_t ctl_relay_get(void);            /* 继电器状态：1=吸合 0=断开 */
 /* USER CODE END Exported functions */

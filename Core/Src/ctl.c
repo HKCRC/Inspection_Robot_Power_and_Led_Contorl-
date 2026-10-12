@@ -14,6 +14,8 @@
   *          ⑥ 断电只响应上位机"写线圈0=0x0000"，而且是**延时断 MOS**：
   *             收到关电指令后 MOS 继续供电 CTL_POWER_OFF_DELAY_MS(15s)，
   *             给上位机留出关机时间；期间再写线圈0=0xFF00 可取消延时。
+  *             注意：读线圈0 上报的是**命令状态**（写完 0 立即读回 0），
+  *             不是 MOS 的实际输出（延时期间仍在通电）。
   *          ⑦ 继电器(线圈1)：吸合/断开均**立即**执行，无延时
   *             （继电器驱动为低电平吸合，极性宏可改）
   *          输入统一取自 di.c 防抖稳定状态，输出统一经 relay.c 通道驱动，
@@ -43,7 +45,8 @@
 /* USER CODE END Private defines */
 
 /* USER CODE BEGIN Private variables */
-static uint8_t  s_power_out;       /* MOS 实际输出：1=通电 0=断电(延时到期后才置 0) */
+static uint8_t  s_power_cmd;       /* 电源命令状态：1=通电命令 0=关电命令(FC01 读线圈0 数据源) */
+static uint8_t  s_power_out;       /* MOS 实际输出：1=通电 0=断电(关电延时到期后才置 0) */
 static uint8_t  s_power_off_pend;  /* 1=延时断电进行中(此时 s_power_out 仍为 1) */
 static uint32_t s_power_off_t0;    /* 收到关电指令的时刻(ms tick) */
 static uint8_t  s_relay;           /* 继电器状态：1=吸合(输出低) 0=断开(输出高)，无延时 */
@@ -60,6 +63,7 @@ static uint8_t  s_relay;           /* 继电器状态：1=吸合(输出低) 0=�
   */
 void ctl_init(void)
 {
+  s_power_cmd      = 0u;   /* 命令状态：默认关电 */
   s_power_out      = 0u;   /* MOS 关断，等待 START 按下或上位机指令 */
   s_power_off_pend = 0u;
   s_relay          = 1u;   /* 上电默认吸合(与 relay_init 输出低=吸合一致) */
@@ -74,6 +78,8 @@ void ctl_init(void)
   */
 void ctl_set_power(uint8_t on)
 {
+  s_power_cmd = on ? 1u : 0u;           /* 命令状态立即更新：写 0 后立即读回 0 */
+
   if (on)
   {
     s_power_out      = 1u;
@@ -87,12 +93,15 @@ void ctl_set_power(uint8_t on)
 }
 
 /**
-  * @brief  查询电源实际输出状态（Modbus FC01 读线圈0 的数据源）
-  * @retval 1=MOS 通电(含延时断电进行中)  0=已断电
+  * @brief  查询电源命令状态（Modbus FC01 读线圈0 的数据源）
+  * @retval 1=通电命令  0=关电命令
+  * @note   表示"命令已被接受"：上位机写线圈0=0x0000 后立即读回 0；
+  *         此时 MOS 仍在延时供电 CTL_POWER_OFF_DELAY_MS，MOS 实际输出
+  *         由 ctl.c 内部的 s_power_out 跟踪（不对外上报）。
   */
 uint8_t ctl_power_get(void)
 {
-  return s_power_out;
+  return s_power_cmd;
 }
 
 /**
@@ -134,6 +143,7 @@ void ctl_task(void)
    *    （需求 §4.2：关机倒计时期间 START 按键不处理） */
   if ((start_now != 0u) && (s_power_off_pend == 0u))
   {
+    s_power_cmd = 1u;
     s_power_out = 1u;
   }
 
